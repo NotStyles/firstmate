@@ -10,7 +10,7 @@
 #   fm-remote-secondmate-control.sh key <id> <key>
 #   fm-remote-secondmate-control.sh capture <id> [lines]
 #   fm-remote-secondmate-control.sh observe <id>
-#   fm-remote-secondmate-control.sh sync <id> [<parent-commit> [<refresh-origin:yes|no>]]
+#   fm-remote-secondmate-control.sh sync <id> [<parent-commit>]
 #   fm-remote-secondmate-control.sh update <id>
 #   fm-remote-secondmate-control.sh retire <id> [--force]
 #
@@ -360,9 +360,8 @@ import_home_commit() { # <home> <commit>
 }
 
 cmd_sync() {
-  local id=$1 commit report out refresh_origin=${3:-no}
+  local id=$1 commit report out
   validate_id "$id"
-  case "$refresh_origin" in yes|no) ;; *) die "invalid origin refresh mode" ;; esac
   validate_home "$id"
   if [ "$#" -ge 2 ]; then
     commit=$2
@@ -375,7 +374,7 @@ cmd_sync() {
     || die "remote home could not import $commit from this host's Firstmate copy or the home's origin; run /updatefirstmate to refresh this host's copy, or push that commit first"
   # ff_target publishes its verdict in FF_STATUS, so it must run in THIS shell.
   report=$(mktemp "${TMPDIR:-/tmp}/fm-remote-sync.XXXXXX") || die "cannot stage the sync report"
-  ff_target "$TARGET_HOME" "remote home" "$commit" yes yes "$id" "$TARGET_HOME/state" "$refresh_origin" > "$report" 2>&1
+  ff_target "$TARGET_HOME" "remote home" "$commit" yes yes "$id" "$TARGET_HOME/state" yes > "$report" 2>&1
   out=$(cat "$report")
   rm -f "$report"
   case "$FF_STATUS" in
@@ -391,7 +390,7 @@ cmd_sync() {
 }
 
 cmd_update() {
-  local id=$1 update_out root_status commit
+  local id=$1 update_out root_status
   validate_id "$id"
   validate_home "$id"
   if ! update_out=$(FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
@@ -407,8 +406,7 @@ cmd_update() {
       die "remote code root did not complete a safe origin update"
       ;;
   esac
-  commit=$(git -C "$FM_ROOT" rev-parse HEAD 2>/dev/null) || die "remote code root HEAD is unreadable"
-  cmd_sync "$id" "$commit" yes
+  cmd_sync "$id"
 }
 
 cmd_retire() {
@@ -445,7 +443,7 @@ case "${1:-}" in
   key) shift; [ "$#" -eq 2 ] || usage; cmd_key "$@" ;;
   capture) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_capture "$@" ;;
   observe) shift; [ "$#" -eq 1 ] || usage; cmd_observe "$@" ;;
-  sync) shift; [ "$#" -ge 1 ] && [ "$#" -le 3 ] || usage; cmd_sync "$@" ;;
+  sync) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_sync "$@" ;;
   update) shift; [ "$#" -eq 1 ] || usage; cmd_update "$@" ;;
   retire) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_retire "$@" ;;
   ''|-h|--help|help) usage ;;

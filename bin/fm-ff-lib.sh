@@ -23,9 +23,10 @@
 # path updates it.
 # A tracked-files fast-forward never touches the gitignored operational dirs
 # (data/, state/, config/, projects/, .no-mistakes/), so it cannot disturb a
-# secondmate's backlog, projects, or in-flight work. Release-update and remote
-# parent-targeted convergence best-effort refresh the home's remote-tracking refs,
-# including already-current homes; linked worktrees share those refs with the primary and sibling worktrees.
+# secondmate's backlog, projects, or in-flight work. Release-update and remote-home
+# sync convergence best-effort refresh the home's remote-tracking refs, including
+# already-current homes; linked worktrees share those refs with the primary and
+# sibling worktrees.
 # The local-HEAD spawn/bootstrap sync remains network-free.
 # The seeded .fm-secondmate-home identity marker is gitignored too; the local
 # sync tolerates only that marker during the one-time upgrade of pre-ignore
@@ -230,7 +231,7 @@ fetch_once() {
 
 # Best-effort refresh after a release update has converged a secondmate home.
 # Origin-mode targets already ran fetch_once, so only remote HEAD needs repair;
-# a parent-targeted remote update fetches the home's resolved default branch here.
+# a remote-home sync fetches the home's resolved default branch here.
 # Separate hard bounds keep either network operation from delaying convergence.
 ff_refresh_origin_tracking() { # <dir> <default-branch> <fetch-origin:yes|no>
   local dir=$1 branch=$2 fetch_origin=$3 common ssh_command
@@ -242,7 +243,10 @@ ff_refresh_origin_tracking() { # <dir> <default-branch> <fetch-origin:yes|no>
     esac
     FF_TRACKING_REFRESHED="${FF_TRACKING_REFRESHED}${FF_TRACKING_REFRESHED:+ }$common"
   fi
-  ssh_command=${GIT_SSH_COMMAND:-ssh}
+  ssh_command=${GIT_SSH_COMMAND:-$(git -C "$dir" config --get core.sshCommand 2>/dev/null || true)}
+  if [ -z "$ssh_command" ]; then
+    if [ -n "${GIT_SSH:-}" ]; then ssh_command=$(printf '%q' "$GIT_SSH"); else ssh_command=ssh; fi
+  fi
   case "$ssh_command" in *"BatchMode=yes"*) ;; *) ssh_command="$ssh_command -o BatchMode=yes" ;; esac
   if [ "$fetch_origin" = yes ]; then
     fm_run_timed 5 env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$ssh_command" \

@@ -988,6 +988,11 @@ if [ "${FM_TEST_REMOTE_LEG_REJECT_SYNC:-0}" = 1 ] \
   printf 'Host-local lifecycle control for the remote secondmate home selected by fm-on.\n'
   exit 2
 fi
+# A host on the previous release accepts only `sync <id> [<commit>]`, so a
+# parent that still converges such hosts never sends more.
+if [ "$cmd" = fm-remote-secondmate-control.sh ] && [ "${rargs[1]:-}" = sync ] && [ "${#rargs[@]}" -gt 4 ]; then
+  exit 2
+fi
 rc=0
 env FM_HOME="$remote_home" FM_ROOT_OVERRIDE="$FM_REMOTE_CODE_ROOT" \
   "$FM_TEST_REPO_ROOT/bin/$cmd" "${rargs[@]:1}" || rc=$?
@@ -1394,6 +1399,45 @@ SH
 }
 
 test_remote_tracking_refresh_bounds_each_network_step
+
+# --- R7c: the tracking refresh keeps the home's configured SSH command ---------
+test_remote_tracking_refresh_keeps_configured_ssh() {
+  local w c2 fakebin ssh_log
+  w=$(new_remote_world remote-tracking-ssh)
+  add_remote_home "$w" sm "$w/coderoot" "$(head_of "$w/coderoot")"
+  git -C "$w/sm" remote set-url origin "git@forge.invalid:fleet/firstmate.git"
+  bump_primary "$w" readme
+  c2=$(head_of "$w/main")
+  git -C "$w/main" push -q origin main
+  git -C "$w/coderoot" pull -q --ff-only
+  fakebin=$(fm_fakebin "$w/sshcmd")
+  ssh_log="$w/ssh.log"
+  for name in configured-ssh env-ssh; do
+    cat > "$fakebin/$name" <<SH
+#!/usr/bin/env bash
+printf '$name %s\\n' "\$*" >> '$ssh_log'
+exit 1
+SH
+    chmod +x "$fakebin/$name"
+  done
+
+  git -C "$w/sm" config core.sshCommand "$fakebin/configured-ssh"
+  (unset GIT_SSH_COMMAND GIT_SSH; remote_sync "$w" sm "$c2"; [ "$REMOTE_SYNC_RC" -eq 0 ]) \
+    || fail "an unreachable origin changed sync success"
+  [ "$(head_of "$w/sm")" = "$c2" ] || fail "the home did not converge with an unreachable origin"
+  grep -q '^configured-ssh .*BatchMode=yes' "$ssh_log" \
+    || fail "the tracking refresh bypassed core.sshCommand (log: $(cat "$ssh_log" 2>/dev/null))"
+
+  : > "$ssh_log"
+  git -C "$w/sm" config --unset core.sshCommand
+  git -C "$w/sm" update-ref refs/remotes/origin/main "$c2~1"
+  (unset GIT_SSH_COMMAND; export GIT_SSH="$fakebin/env-ssh"; remote_sync "$w" sm "$c2")
+  grep -q '^env-ssh .*BatchMode=yes' "$ssh_log" \
+    || fail "the tracking refresh bypassed GIT_SSH (log: $(cat "$ssh_log" 2>/dev/null))"
+  pass "R7c the tracking refresh uses the home's core.sshCommand or GIT_SSH noninteractively"
+}
+
+test_remote_tracking_refresh_keeps_configured_ssh
 
 # seed_remote_parent <w>: the parent side of a remote secondmate route in world
 # <w>: a primary carrying the real remote tooling, a remote home "sm" one commit
