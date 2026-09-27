@@ -620,7 +620,7 @@ secondmate_sync() {
     nudge_needed=0
     converged=1
     if sync_out=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh sync "$id" \
-      "$primary_head" < /dev/null 2>&1); then
+      "$primary_head" yes < /dev/null 2>&1); then
       case "$sync_out" in synced:*) nudge_needed=1 ;; esac
     else
       sync_rc=$?

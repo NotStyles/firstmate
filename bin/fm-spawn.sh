@@ -1010,7 +1010,7 @@ spawn_remote_secondmate() {
   # and fast-forward to. A skipped sync warns and launches the home unchanged.
   if sm_primary_head=$(primary_head_commit "$FM_ROOT"); then
     if sync_out=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh sync "$id" \
-      "$sm_primary_head" </dev/null 2>&1); then
+      "$sm_primary_head" yes </dev/null 2>&1); then
       :
     else
       sync_rc=$?

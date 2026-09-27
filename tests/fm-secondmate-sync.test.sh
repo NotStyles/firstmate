@@ -1395,13 +1395,12 @@ SH
 
 test_remote_tracking_refresh_bounds_each_network_step
 
-# --- R8: session start hands the remote host the PRIMARY's commit --------------
-# The deferred network stage is the only startup path that reaches a remote home,
-# so this drives the real bin/fm-bootstrap.sh network phase across the real
-# transport boundary and reads back where the home actually landed.
-test_bootstrap_syncs_remote_home_to_primary_commit() {
-  local w c1 c2 home fakebin out coderoot_before
-  w=$(new_remote_world remote-bootstrap)
+# seed_remote_parent <w>: the parent side of a remote secondmate route in world
+# <w>: a primary carrying the real remote tooling, a remote home "sm" one commit
+# behind it with stale origin tracking refs, and the parent's registry entry.
+# Echoes the primary commit the home must converge on.
+seed_remote_parent() {
+  local w=$1 c1 home
   # fm-on.sh only routes commands this primary checkout genuinely tracks, so the
   # fixture primary carries the real tooling the parent legs invoke.
   cp "$ROOT"/bin/fm-remote-*.sh "$w/main/bin/"
@@ -1410,16 +1409,40 @@ test_bootstrap_syncs_remote_home_to_primary_commit() {
   git -C "$w/main" push -q origin main
   c1=$(head_of "$w/main")
   add_remote_home "$w" sm "$w/forge.git" "$c1"
+  git -C "$w/sm" symbolic-ref --delete refs/remotes/origin/HEAD
   bump_primary "$w" instr
-  c2=$(head_of "$w/main")
   git -C "$w/main" push -q origin main
-  coderoot_before=$(head_of "$w/coderoot")
   home="$w/home"
   mkdir -p "$home/config" "$home/projects"
   printf -- '- sm - remote fixture (host: host-sm; root: %s; home: %s; scope: remote work; projects: alpha; added 2026-08-02)\n' \
     "$w/coderoot" "$w/sm" > "$home/data/secondmates.md"
-  fm_write_secondmate_meta "$home/state/sm.meta" "$w/sm"
-  printf 'remote_host=host-sm\n' >> "$home/state/sm.meta"
+  head_of "$w/main"
+}
+
+# assert_remote_tracking_refreshed <w> <commit> <label>
+assert_remote_tracking_refreshed() {
+  local w=$1 commit=$2 label=$3 tracking_head
+  [ "$(git -C "$w/sm" rev-parse refs/remotes/origin/main)" = "$commit" ] \
+    || fail "$label left the remote home's origin/main stale"
+  tracking_head=$(git -C "$w/sm" symbolic-ref --quiet refs/remotes/origin/HEAD) \
+    || fail "$label did not restore the remote home's origin/HEAD"
+  [ "$tracking_head" = refs/remotes/origin/main ] \
+    || fail "$label restored origin/HEAD to '$tracking_head'"
+}
+
+# --- R8: session start hands the remote host the PRIMARY's commit --------------
+# The deferred network stage is the only startup path that reaches a remote home,
+# so this drives the real bin/fm-bootstrap.sh network phase across the real
+# transport boundary and reads back where the home actually landed.
+test_bootstrap_syncs_remote_home_to_primary_commit() {
+  local w c2 fakebin out coderoot_before
+  w=$(new_remote_world remote-bootstrap)
+  c2=$(seed_remote_parent "$w")
+  [ "$(git -C "$w/sm" rev-parse refs/remotes/origin/main)" != "$c2" ] \
+    || fail "precondition: remote home origin/main should be stale"
+  coderoot_before=$(head_of "$w/coderoot")
+  fm_write_secondmate_meta "$w/home/state/sm.meta" "$w/sm"
+  printf 'remote_host=host-sm\n' >> "$w/home/state/sm.meta"
   mkdir -p "$w/sm/state/parent-route"
   fm_write_meta "$w/sm/state/parent-route/sm.meta" \
     'window=fm-remote:p1' 'endpoint_task_id=sm' 'worktree=-' 'project=-' \
@@ -1429,7 +1452,7 @@ test_bootstrap_syncs_remote_home_to_primary_commit() {
   fakebin=$(make_remote_leg_ssh_stub "$w")
   fm_fake_exit0 "$fakebin" gh treehouse tmux node
   out=$(PATH="$fakebin:$BASE_PATH" \
-    FM_HOME="$home" FM_ROOT_OVERRIDE="$w/main" \
+    FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_BOOTSTRAP_NETWORK=only \
     FM_SSH_BIN="$fakebin/fake-ssh" FM_REMOTE_CODE_ROOT="$w/coderoot" \
     FM_TEST_REPO_ROOT="$ROOT" \
@@ -1440,7 +1463,30 @@ test_bootstrap_syncs_remote_home_to_primary_commit() {
     || fail "session start left the remote home off the primary's commit (out: $out)"
   [ "$(head_of "$w/coderoot")" = "$coderoot_before" ] \
     || fail "session start moved the host's own Firstmate copy"
-  pass "R8 session start converges a remote home on the primary's default-branch commit"
+  assert_remote_tracking_refreshed "$w" "$c2" "session start"
+  pass "R8 session start converges a remote home on the primary's default-branch commit and refreshes its tracking refs"
+}
+
+# --- R8b: a remote pre-launch sync refreshes the home's tracking refs ----------
+test_spawn_remote_sync_refreshes_tracking_refs() {
+  local w c2 fakebin out
+  w=$(new_remote_world remote-spawn-tracking)
+  c2=$(seed_remote_parent "$w")
+  [ "$(git -C "$w/sm" rev-parse refs/remotes/origin/main)" != "$c2" ] \
+    || fail "precondition: remote home origin/main should be stale"
+
+  fakebin=$(make_remote_leg_ssh_stub "$w")
+  fm_fake_exit0 "$fakebin" gh treehouse tmux node
+  out=$(PATH="$fakebin:$BASE_PATH" \
+    FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" FM_SPAWN_NO_GUARD=1 \
+    FM_SSH_BIN="$fakebin/fake-ssh" FM_REMOTE_CODE_ROOT="$w/coderoot" \
+    FM_TEST_REPO_ROOT="$ROOT" FM_INHERITABLE_CONFIG='' \
+    "$ROOT/bin/fm-spawn.sh" sm --secondmate --harness codex 2>&1) || true
+
+  [ "$(head_of "$w/sm")" = "$c2" ] \
+    || fail "remote pre-launch sync left the home off the primary's commit (out: $out)"
+  assert_remote_tracking_refreshed "$w" "$c2" "remote pre-launch sync"
+  pass "R8b a remote pre-launch sync converges the home and refreshes its tracking refs"
 }
 
 # --- R10: an outdated host refuses, and the report says how to fix it ----------
@@ -1558,6 +1604,7 @@ test_remote_sync_skips_unimportable_target
 test_remote_sync_skips_dirty_diverged_and_feature_branch
 test_remote_sync_without_target_follows_host_copy
 test_bootstrap_syncs_remote_home_to_primary_commit
+test_spawn_remote_sync_refreshes_tracking_refs
 test_bootstrap_reports_outdated_host_actionably
 test_remote_launch_does_not_retarget_host_copy
 

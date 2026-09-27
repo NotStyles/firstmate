@@ -23,9 +23,9 @@
 # path updates it.
 # A tracked-files fast-forward never touches the gitignored operational dirs
 # (data/, state/, config/, projects/, .no-mistakes/), so it cannot disturb a
-# secondmate's backlog, projects, or in-flight work. Release-update convergence
-# best-effort refreshes the home's remote-tracking refs, including already-current
-# homes; linked worktrees share those refs with the primary and sibling worktrees.
+# secondmate's backlog, projects, or in-flight work. Release-update and remote
+# parent-targeted convergence best-effort refresh the home's remote-tracking refs,
+# including already-current homes; linked worktrees share those refs with the primary and sibling worktrees.
 # The local-HEAD spawn/bootstrap sync remains network-free.
 # The seeded .fm-secondmate-home identity marker is gitignored too; the local
 # sync tolerates only that marker during the one-time upgrade of pre-ignore
