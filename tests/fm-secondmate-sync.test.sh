@@ -1243,7 +1243,7 @@ test_remote_sync_without_target_follows_host_copy() {
 
 # --- R7b: release update refreshes remote-home tracking refs ------------------
 test_remote_update_refreshes_tracking_refs() {
-  local w c1 c2 c3 branch_base local_tip tracking_head current_out
+  local w c1 c2 c3 branch_base local_tip tracking_head
   w=$(new_remote_world remote-update-tracking)
   c1=$(head_of "$w/coderoot")
   add_remote_home "$w" sm "$w/coderoot" "$c1"
