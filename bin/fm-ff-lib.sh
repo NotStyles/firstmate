@@ -23,7 +23,9 @@
 # path updates it.
 # A tracked-files fast-forward never touches the gitignored operational dirs
 # (data/, state/, config/, projects/, .no-mistakes/), so it cannot disturb a
-# secondmate's backlog, projects, or in-flight work.
+# secondmate's backlog, projects, or in-flight work. Release-update convergence
+# best-effort refreshes the home's own remote-tracking head after it lands; the
+# local-HEAD spawn/bootstrap sync remains network-free.
 # The seeded .fm-secondmate-home identity marker is gitignored too; the local
 # sync tolerates only that marker during the one-time upgrade of pre-ignore
 # linked-worktree homes.
@@ -40,6 +42,8 @@
 SUB_HOME_MARKER="${SUB_HOME_MARKER:-.fm-secondmate-home}"
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-secondmate-registry-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -222,6 +226,23 @@ fetch_once() {
   return 1
 }
 
+# Best-effort refresh after a release update has converged a secondmate home.
+# One explicit main-branch fetch keeps network work bounded; a hard timeout
+# makes an unavailable origin unable to delay or change the convergence result.
+ff_refresh_origin_tracking() { # <dir>
+  local dir=$1
+  git -C "$dir" remote get-url origin >/dev/null 2>&1 || return 0
+  # shellcheck disable=SC2016  # The child shell resolves its own positional arguments.
+  fm_run_timed 5 bash -c '
+    dir=$1
+    export GIT_TERMINAL_PROMPT=0
+    git -C "$dir" fetch --quiet --no-tags --no-recurse-submodules origin \
+      +refs/heads/main:refs/remotes/origin/main >/dev/null 2>&1 || true
+    git -C "$dir" remote set-head origin -a >/dev/null 2>&1 || true
+  ' _ "$dir" >/dev/null 2>&1 || true
+  return 0
+}
+
 # Which watched instruction paths changed between HEAD and BASE (comma list).
 # These are the files a running agent actually reads or runs: its instructions
 # (AGENTS.md, which CLAUDE.md imports via @AGENTS.md), its agent-loaded skills
@@ -383,7 +404,7 @@ FF_STATUS=""
 FF_INSTR=""
 ff_target() {
   local dir=$1 label=$2 base_mode=$3 allow_detached=${4:-no} ignore_seed_marker=${5:-no}
-  local secondmate_id=${6:-} reconciliation_state=${7:-}
+  local secondmate_id=${6:-} reconciliation_state=${7:-} refresh_origin=${8:-no}
   FF_STATUS="skipped"
   FF_INSTR=""
 
@@ -461,6 +482,10 @@ ff_target() {
         FF_STATUS="updated"
         FF_INSTR="$instr"
         secondmate_update_reconcile_clear "$reconciliation_state" "$secondmate_id" || true
+        if [ -n "$secondmate_id" ] \
+          && { [ "$base_mode" = origin ] || [ "$refresh_origin" = yes ]; }; then
+          ff_refresh_origin_tracking "$dir"
+        fi
         if [ -n "$instr" ]; then
           echo "$label: reconciled redundant divergence $before..$after (instructions changed: $instr)"
         else
@@ -494,6 +519,10 @@ ff_target() {
   FF_STATUS="updated"
   FF_INSTR="$instr"
   [ -z "$reconciliation_state" ] || secondmate_update_reconcile_clear "$reconciliation_state" "$secondmate_id" || true
+  if [ -n "$secondmate_id" ] \
+    && { [ "$base_mode" = origin ] || [ "$refresh_origin" = yes ]; }; then
+    ff_refresh_origin_tracking "$dir"
+  fi
   if [ -n "$instr" ]; then
     echo "$label: updated $before..$after (instructions changed: $instr)"
   else

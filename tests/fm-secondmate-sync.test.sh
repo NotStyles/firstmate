@@ -991,6 +991,15 @@ remote_sync() {
     "$ROOT/bin/fm-remote-secondmate-control.sh" sync "$id" "$@" 2>&1) || REMOTE_SYNC_RC=$?
 }
 
+REMOTE_UPDATE_OUT=""
+REMOTE_UPDATE_RC=0
+remote_update() {
+  local w=$1 id=$2
+  REMOTE_UPDATE_RC=0
+  REMOTE_UPDATE_OUT=$(FM_HOME="$w/$id" FM_ROOT_OVERRIDE="$w/coderoot" \
+    "$ROOT/bin/fm-remote-secondmate-control.sh" update "$id" 2>&1) || REMOTE_UPDATE_RC=$?
+}
+
 # --- R1: a remote home follows the PARENT primary, not the host's own copy ----
 # The reported incident: the home had already advanced past the host's Firstmate
 # copy, so a sync aimed at that copy refused as a non-fast-forward and the home
@@ -1208,6 +1217,68 @@ test_remote_sync_without_target_follows_host_copy() {
   [ "$(head_of "$w/sm")" = "$c2" ] || fail "the no-target sync did not advance the home"
   pass "R7 a sync with no target still follows the host's own refreshed Firstmate copy"
 }
+
+# --- R7b: release update refreshes remote-home tracking refs ------------------
+test_remote_update_refreshes_tracking_refs() {
+  local w c1 c2 c3 branch_base local_tip tracking_head
+  w=$(new_remote_world remote-update-tracking)
+  c1=$(head_of "$w/coderoot")
+  add_remote_home "$w" sm "$w/coderoot" "$c1"
+
+  bump_primary "$w" readme
+  c2=$(head_of "$w/main")
+  git -C "$w/main" push -q origin main
+  [ "$(git -C "$w/sm" rev-parse refs/remotes/origin/main)" != "$c2" ] \
+    || fail "precondition: remote home origin/main should be stale"
+  git -C "$w/sm" symbolic-ref --delete refs/remotes/origin/HEAD \
+    || fail "could not remove remote home origin/HEAD"
+
+  remote_update "$w" sm
+
+  [ "$REMOTE_UPDATE_RC" -eq 0 ] || fail "remote release update failed: $REMOTE_UPDATE_OUT"
+  assert_contains "$REMOTE_UPDATE_OUT" "synced: $c2" "remote update did not report the release commit"
+  [ "$(head_of "$w/sm")" = "$c2" ] || fail "remote home did not converge to the release commit"
+  [ "$(git -C "$w/sm" rev-parse refs/remotes/origin/main)" = "$c2" ] \
+    || fail "remote update left origin/main stale"
+  tracking_head=$(git -C "$w/sm" symbolic-ref --quiet refs/remotes/origin/HEAD) \
+    || fail "remote update did not restore origin/HEAD"
+  [ "$tracking_head" = refs/remotes/origin/main ] \
+    || fail "remote update restored origin/HEAD to '$tracking_head'"
+
+  bump_primary "$w" readme
+  c3=$(head_of "$w/main")
+  git -C "$w/main" push -q origin main
+  git -C "$w/sm" remote remove origin
+  remote_update "$w" sm
+  [ "$REMOTE_UPDATE_RC" -eq 0 ] || fail "a missing home origin changed update success: $REMOTE_UPDATE_OUT"
+  [ "$(head_of "$w/sm")" = "$c3" ] || fail "remote home did not converge without its optional origin"
+
+  git -C "$w/sm" remote add origin "$w/coderoot"
+  branch_base=$(head_of "$w/sm")
+  printf 'squash-landed local contribution\n' > "$w/sm/LOCAL.md"
+  git -C "$w/sm" add LOCAL.md
+  git -C "$w/sm" commit -qm local-contribution
+  local_tip=$(head_of "$w/sm")
+  git -C "$w/sm" diff "$branch_base" "$local_tip" | git -C "$w/main" apply
+  git -C "$w/main" add -A
+  git -C "$w/main" commit -qm squash-local-contribution
+  git -C "$w/main" push -q origin main
+  c3=$(head_of "$w/main")
+
+  remote_update "$w" sm
+
+  [ "$REMOTE_UPDATE_RC" -eq 0 ] || fail "remote redundant-divergence update failed: $REMOTE_UPDATE_OUT"
+  assert_contains "$REMOTE_UPDATE_OUT" "synced: $c3" "remote reconcile did not report the release commit"
+  [ "$(head_of "$w/sm")" = "$c3" ] || fail "remote reconcile did not land the release commit"
+  if git -C "$w/sm" merge-base --is-ancestor "$local_tip" "$c3" 2>/dev/null; then
+    fail "remote redundant reconcile retained the local commit instead of resetting to the release tip"
+  fi
+  [ "$(git -C "$w/sm" rev-parse refs/remotes/origin/main)" = "$c3" ] \
+    || fail "remote reconcile left origin/main stale"
+  pass "remote release updates refresh origin tracking after fast-forward and reset; a missing origin stays optional"
+}
+
+test_remote_update_refreshes_tracking_refs
 
 # --- R8: session start hands the remote host the PRIMARY's commit --------------
 # The deferred network stage is the only startup path that reaches a remote home,
