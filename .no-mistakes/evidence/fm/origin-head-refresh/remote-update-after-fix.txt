@@ -1,0 +1,6 @@
+### /updatefirstmate remote leg: fm-remote-secondmate-control.sh update sm1
+synced: f4dc0c9ab68a95290384099259677cf8937262bb instr=
+rc=0
+coderoot == forge main: yes
+## main...origin/main
+origin/HEAD: refs/remotes/origin/main

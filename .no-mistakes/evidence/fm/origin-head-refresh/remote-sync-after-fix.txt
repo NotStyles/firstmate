@@ -1,0 +1,39 @@
+
+### [AFTER-fix] S1: 2-arg sync <id> <primary-commit> (session-start / spawn wire shape)
+synced: f69737db843295ae228b3c11c540b73b4b566f77 instr=
+rc=0 elapsed=0s
+home HEAD == release: yes
+git status -sb:
+## main...origin/main
+origin/HEAD: refs/remotes/origin/main
+rev-list --count origin/main..HEAD: 0
+porcelain changes: 0
+
+### [AFTER-fix] S2: already-current home with stale tracking refs
+current: f69737db843295ae228b3c11c540b73b4b566f77
+rc=0
+## main...origin/main
+origin/HEAD: refs/remotes/origin/main
+
+### [AFTER-fix] S3: adversarial - origin unreachable (forge moved away); sync must still converge
+synced: 233b99d3d5eafad0744f31c2cbb0b5cc0b51c4a7 instr=
+rc=0 elapsed=0s
+home HEAD == release2: yes
+
+### [AFTER-fix] S4: adversarial - origin hangs (ssh url, core.sshCommand sleeps 30s); bounded + configured ssh preserved
+synced: e96d885a5f8d758bda45bcac4c2f9dd29dd64c39 instr=
+rc=0 elapsed=10s
+home HEAD == release3: yes
+configured sshCommand invocations:
+-o BatchMode=yes -G -o SendEnv=GIT_PROTOCOL git@forge.invalid
+-o BatchMode=yes -G -o SendEnv=GIT_PROTOCOL git@forge.invalid
+
+### [AFTER-fix] S5: adversarial - dirty home is refused and its working tree + tracking refs untouched
+error: remote secondmate home sync skipped: dirty working tree
+rc=1
+HEAD unchanged: yes
+origin/main unchanged: yes
+local edit preserved: local edit
+
+### [AFTER-fix] S6: wire shape - a 3-arg sync is still rejected as usage (shape unchanged)
+rc=2

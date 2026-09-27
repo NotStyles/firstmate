@@ -1,0 +1,38 @@
+
+### [BEFORE-fix] S1: 2-arg sync <id> <primary-commit> (session-start / spawn wire shape)
+synced: 7c574fc3c20e669cd8b77af760dfb18fe6fb1da2 instr=
+rc=0 elapsed=0s
+home HEAD == release: yes
+git status -sb:
+## main...origin/main [ahead 37]
+origin/HEAD: <missing>
+rev-list --count origin/main..HEAD: 37
+porcelain changes: 0
+
+### [BEFORE-fix] S2: already-current home with stale tracking refs
+current: 7c574fc3c20e669cd8b77af760dfb18fe6fb1da2
+rc=0
+## main...origin/main [ahead 5]
+origin/HEAD: <missing>
+
+### [BEFORE-fix] S3: adversarial - origin unreachable (forge moved away); sync must still converge
+synced: f24f510d184d89596b3b706989e8cedba4fcb2c4 instr=
+rc=0 elapsed=0s
+home HEAD == release2: yes
+
+### [BEFORE-fix] S4: adversarial - origin hangs (ssh url, core.sshCommand sleeps 30s); bounded + configured ssh preserved
+synced: 8e1d0cd1320172be36a9d4ecda08a4f81777d8b8 instr=
+rc=0 elapsed=0s
+home HEAD == release3: yes
+configured sshCommand invocations:
+<none>
+
+### [BEFORE-fix] S5: adversarial - dirty home is refused and its working tree + tracking refs untouched
+error: remote secondmate home sync skipped: dirty working tree
+rc=1
+HEAD unchanged: yes
+origin/main unchanged: yes
+local edit preserved: local edit
+
+### [BEFORE-fix] S6: wire shape - a 3-arg sync is still rejected as usage (shape unchanged)
+rc=2
