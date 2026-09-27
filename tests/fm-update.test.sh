@@ -177,7 +177,7 @@ test_updates_main_and_secondmate() {
 }
 
 test_secondmate_update_repairs_origin_head() {
-  local w out tracking_head
+  local w out current_out tracking_head
   w=$(new_world t1b)
   add_sm "$w" sm1
   git -C "$w/main" symbolic-ref --delete refs/remotes/origin/HEAD \
@@ -193,7 +193,41 @@ test_secondmate_update_repairs_origin_head() {
     || fail "origin/HEAD points to '$tracking_head', expected origin/main"
   [ "$(git -C "$w/sm1" rev-parse origin/main)" = "$(git -C "$w/main" rev-parse HEAD)" ] \
     || fail "origin/main did not match the release tip"
-  pass "a local secondmate update repairs origin/HEAD after convergence"
+
+  git -C "$w/main" symbolic-ref --delete refs/remotes/origin/HEAD \
+    || fail "could not remove origin/HEAD before the already-current update"
+  current_out=$(run_update "$w")
+  assert_contains "$current_out" "secondmate sm1: already current" \
+    "the second update should leave the home at the release tip"
+  tracking_head=$(git -C "$w/sm1" symbolic-ref --quiet refs/remotes/origin/HEAD) \
+    || fail "the already-current update did not restore origin/HEAD"
+  [ "$tracking_head" = refs/remotes/origin/main ] \
+    || fail "the already-current update restored origin/HEAD to '$tracking_head'"
+  pass "local release updates repair origin/HEAD for both updated and current homes"
+}
+
+test_origin_tracking_refresh_deduplicates_shared_worktrees() {
+  local w real_git tracking_log out count
+  w=$(new_world update-tracking-dedup)
+  add_sm "$w" sm1
+  add_sm "$w" sm2
+  bump_origin "$w" readme
+  real_git=$(command -v git)
+  tracking_log="$w/tracking-set-head.log"
+  cat > "$w/fakebin/git" <<SH
+#!/usr/bin/env bash
+case "\$*" in *" remote set-head origin -a"*) printf 'set-head\\n' >> '$tracking_log' ;; esac
+exec '$real_git' "\$@"
+SH
+  chmod +x "$w/fakebin/git"
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "secondmate sm1: updated " "first shared home did not converge"
+  assert_contains "$out" "secondmate sm2: updated " "second shared home did not converge"
+  count=$(wc -l < "$tracking_log" | tr -d ' ')
+  [ "$count" -eq 1 ] || fail "shared worktrees ran remote set-head $count times, expected once"
+  pass "origin-mode release updates deduplicate remote HEAD refresh across shared worktrees"
 }
 
 # --- T3: README-only change does not trigger a reread ----------------------
@@ -584,6 +618,7 @@ test_primary_update_rebinds_local_watch() {
 
 test_updates_main_and_secondmate
 test_secondmate_update_repairs_origin_head
+test_origin_tracking_refresh_deduplicates_shared_worktrees
 test_reread_gate_is_instruction_only
 test_bin_only_advance_restarts
 test_unprovable_runtime_gets_fallback_nudge

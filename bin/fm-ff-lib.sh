@@ -24,8 +24,9 @@
 # A tracked-files fast-forward never touches the gitignored operational dirs
 # (data/, state/, config/, projects/, .no-mistakes/), so it cannot disturb a
 # secondmate's backlog, projects, or in-flight work. Release-update convergence
-# best-effort refreshes the home's own remote-tracking head after it lands; the
-# local-HEAD spawn/bootstrap sync remains network-free.
+# best-effort refreshes the home's remote-tracking refs, including already-current
+# homes; linked worktrees share those refs with the primary and sibling worktrees.
+# The local-HEAD spawn/bootstrap sync remains network-free.
 # The seeded .fm-secondmate-home identity marker is gitignored too; the local
 # sync tolerates only that marker during the one-time upgrade of pre-ignore
 # linked-worktree homes.
@@ -211,6 +212,7 @@ validate_secondmate_home() {
 # each distinct git-common-dir at most once. Used ONLY by the origin base mode;
 # the local-HEAD sync never fetches.
 FETCHED=""
+FF_TRACKING_REFRESHED=""
 fetch_once() {
   local dir=$1 common
   common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
@@ -227,20 +229,40 @@ fetch_once() {
 }
 
 # Best-effort refresh after a release update has converged a secondmate home.
-# One explicit main-branch fetch keeps network work bounded; a hard timeout
-# makes an unavailable origin unable to delay or change the convergence result.
-ff_refresh_origin_tracking() { # <dir>
-  local dir=$1
+# Origin-mode targets already ran fetch_once, so only remote HEAD needs repair;
+# a parent-targeted remote update fetches the home's resolved default branch here.
+# Separate hard bounds keep either network operation from delaying convergence.
+ff_refresh_origin_tracking() { # <dir> <default-branch> <fetch-origin:yes|no>
+  local dir=$1 branch=$2 fetch_origin=$3 common ssh_command
   git -C "$dir" remote get-url origin >/dev/null 2>&1 || return 0
-  # shellcheck disable=SC2016  # The child shell resolves its own positional arguments.
-  fm_run_timed 5 bash -c '
-    dir=$1
-    export GIT_TERMINAL_PROMPT=0
-    git -C "$dir" fetch --quiet --no-tags --no-recurse-submodules origin \
-      +refs/heads/main:refs/remotes/origin/main >/dev/null 2>&1 || true
+  common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  if [ -n "$common" ]; then
+    case " $FF_TRACKING_REFRESHED " in
+      *" $common "*) return 0 ;;
+    esac
+    FF_TRACKING_REFRESHED="${FF_TRACKING_REFRESHED}${FF_TRACKING_REFRESHED:+ }$common"
+  fi
+  ssh_command=${GIT_SSH_COMMAND:-ssh}
+  case "$ssh_command" in *"BatchMode=yes"*) ;; *) ssh_command="$ssh_command -o BatchMode=yes" ;; esac
+  if [ "$fetch_origin" = yes ]; then
+    fm_run_timed 5 env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$ssh_command" \
+      git -C "$dir" fetch --quiet --no-tags --no-recurse-submodules origin \
+      "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 || true
+  fi
+  fm_run_timed 5 env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$ssh_command" \
     git -C "$dir" remote set-head origin -a >/dev/null 2>&1 || true
-  ' _ "$dir" >/dev/null 2>&1 || true
   return 0
+}
+
+ff_refresh_secondmate_tracking() { # <dir> <default-branch> <secondmate-id> <base-mode> <refresh-origin>
+  local dir=$1 branch=$2 secondmate_id=$3 base_mode=$4 refresh_origin=$5 fetch_origin=yes
+  [ -n "$secondmate_id" ] || return 0
+  if [ "$base_mode" = origin ]; then
+    fetch_origin=no
+  elif [ "$refresh_origin" != yes ]; then
+    return 0
+  fi
+  ff_refresh_origin_tracking "$dir" "$branch" "$fetch_origin"
 }
 
 # Which watched instruction paths changed between HEAD and BASE (comma list).
@@ -469,6 +491,7 @@ ff_target() {
   if [ "$local_rev" = "$base_rev" ]; then
     FF_STATUS="current"
     [ -z "$reconciliation_state" ] || secondmate_update_reconcile_clear "$reconciliation_state" "$secondmate_id" || true
+    ff_refresh_secondmate_tracking "$dir" "$default" "$secondmate_id" "$base_mode" "$refresh_origin"
     echo "$label: already current"
     return 0
   fi
@@ -482,10 +505,7 @@ ff_target() {
         FF_STATUS="updated"
         FF_INSTR="$instr"
         secondmate_update_reconcile_clear "$reconciliation_state" "$secondmate_id" || true
-        if [ -n "$secondmate_id" ] \
-          && { [ "$base_mode" = origin ] || [ "$refresh_origin" = yes ]; }; then
-          ff_refresh_origin_tracking "$dir"
-        fi
+        ff_refresh_secondmate_tracking "$dir" "$default" "$secondmate_id" "$base_mode" "$refresh_origin"
         if [ -n "$instr" ]; then
           echo "$label: reconciled redundant divergence $before..$after (instructions changed: $instr)"
         else
@@ -519,10 +539,7 @@ ff_target() {
   FF_STATUS="updated"
   FF_INSTR="$instr"
   [ -z "$reconciliation_state" ] || secondmate_update_reconcile_clear "$reconciliation_state" "$secondmate_id" || true
-  if [ -n "$secondmate_id" ] \
-    && { [ "$base_mode" = origin ] || [ "$refresh_origin" = yes ]; }; then
-    ff_refresh_origin_tracking "$dir"
-  fi
+  ff_refresh_secondmate_tracking "$dir" "$default" "$secondmate_id" "$base_mode" "$refresh_origin"
   if [ -n "$instr" ]; then
     echo "$label: updated $before..$after (instructions changed: $instr)"
   else
