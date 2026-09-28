@@ -232,11 +232,12 @@ fetch_once() {
 # Best-effort refresh of a converged secondmate home's origin/<default> and
 # origin/HEAD tracking refs. Origin-mode targets already ran fetch_once, so only
 # remote HEAD needs repair; a sync with refresh-origin=yes (the remote-home sync)
-# also fetches the resolved default branch; any other sync stays network-free.
+# also fetches origin's current default branch (from ls-remote, falling back to
+# the locally resolved one when origin is unreachable); any other sync stays network-free.
 # Runs at most once per git-common-dir, and separate hard bounds keep either
 # network operation from delaying convergence. Always returns 0.
 ff_refresh_tracking() { # <dir> <default-branch> <secondmate-id> <base-mode> <refresh-origin>
-  local dir=$1 branch=$2 secondmate_id=$3 base_mode=$4 refresh_origin=$5 common
+  local dir=$1 branch=$2 secondmate_id=$3 base_mode=$4 refresh_origin=$5 common remote_branch=""
   local -a git_env
   [ -n "$secondmate_id" ] || return 0
   [ "$base_mode" = origin ] || [ "$refresh_origin" = yes ] || return 0
@@ -253,6 +254,9 @@ ff_refresh_tracking() { # <dir> <default-branch> <secondmate-id> <base-mode> <re
     git_env+=("GIT_SSH_COMMAND=ssh -o BatchMode=yes")
   fi
   if [ "$base_mode" != origin ]; then
+    remote_branch=$(fm_run_timed 5 "${git_env[@]}" git -C "$dir" ls-remote --symref origin HEAD 2>/dev/null \
+      | awk '$1 == "ref:" && $3 == "HEAD" { sub("^refs/heads/", "", $2); print $2; exit }') || true
+    [ -n "$remote_branch" ] && branch=$remote_branch
     fm_run_timed 5 "${git_env[@]}" \
       git -C "$dir" fetch --quiet --no-tags --no-recurse-submodules origin \
       "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 || true

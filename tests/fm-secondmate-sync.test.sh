@@ -1344,6 +1344,34 @@ test_remote_update_fetches_resolved_default_branch() {
   pass "remote release update fetches and repairs the resolved default branch"
 }
 
+test_remote_update_follows_changed_remote_default_branch() {
+  local w c1 c2 tracking_head
+  w=$(new_remote_world remote-update-changed-default)
+  c1=$(head_of "$w/coderoot")
+  add_remote_home "$w" sm "$w/coderoot" "$c1"
+  bump_primary "$w" readme
+  c2=$(head_of "$w/main")
+  git -C "$w/main" push -q origin main
+  git -C "$w/main" push -q origin main:master
+  git --git-dir="$w/forge.git" symbolic-ref HEAD refs/heads/master
+  git -C "$w/sm" remote set-url origin "$w/forge.git"
+  git -C "$w/sm" update-ref refs/remotes/origin/main "$c1"
+  git -C "$w/sm" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+  git -C "$w/sm" update-ref -d refs/remotes/origin/master 2>/dev/null || true
+
+  remote_update "$w" sm
+
+  [ "$REMOTE_UPDATE_RC" -eq 0 ] || fail "changed-default remote update failed: $REMOTE_UPDATE_OUT"
+  [ "$(head_of "$w/sm")" = "$c2" ] || fail "changed-default home did not converge"
+  [ "$(git -C "$w/sm" rev-parse -q --verify refs/remotes/origin/master)" = "$c2" ] \
+    || fail "refresh did not fetch origin's new default branch"
+  tracking_head=$(git -C "$w/sm" symbolic-ref --quiet refs/remotes/origin/HEAD) \
+    || fail "changed-default update left origin/HEAD missing"
+  [ "$tracking_head" = refs/remotes/origin/master ] \
+    || fail "changed-default update left origin/HEAD at '$tracking_head'"
+  pass "remote release update follows a default branch that changed after clone"
+}
+
 test_remote_tracking_refresh_bounds_each_network_step() {
   local w c1 c2 fakebin real_git tracking_log start elapsed
   w=$(new_remote_world remote-update-bounded-tracking)
@@ -1655,6 +1683,7 @@ test_remote_sync_skips_dirty_diverged_and_feature_branch
 test_remote_sync_without_target_follows_host_copy
 test_remote_update_refreshes_tracking_refs
 test_remote_update_fetches_resolved_default_branch
+test_remote_update_follows_changed_remote_default_branch
 test_remote_tracking_refresh_bounds_each_network_step
 test_remote_tracking_refresh_keeps_configured_ssh
 test_bootstrap_syncs_remote_home_to_primary_commit
