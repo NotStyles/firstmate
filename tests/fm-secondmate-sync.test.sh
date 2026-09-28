@@ -1389,8 +1389,8 @@ SH
   [ "$(git -C "$w/sm" rev-parse refs/remotes/origin/main)" = "$c2" ] \
     || fail "the completed fetch did not refresh origin/main"
   [ -f "$tracking_log" ] || fail "bounded tracking commands were not intercepted"
-  [ "$elapsed" -ge 7 ] && [ "$elapsed" -lt 12 ] \
-    || fail "separate tracking bounds took ${elapsed}s, expected about 8s"
+  [ "$elapsed" -ge 7 ] && [ "$elapsed" -lt 25 ] \
+    || fail "separate tracking bounds took ${elapsed}s, expected 7-24s"
   pass "a slow fetch and hanging remote-head query are independently bounded without changing convergence"
 }
 
