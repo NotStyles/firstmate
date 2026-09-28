@@ -1406,7 +1406,7 @@ test_remote_tracking_refresh_keeps_configured_ssh() {
   git -C "$w/coderoot" pull -q --ff-only
   fakebin=$(fm_fakebin "$w/sshcmd")
   ssh_log="$w/ssh.log"
-  for name in configured-ssh env-ssh; do
+  for name in configured-ssh env-ssh ssh; do
     cat > "$fakebin/$name" <<SH
 #!/usr/bin/env bash
 printf '$name %s\\n' "\$*" >> '$ssh_log'
@@ -1419,8 +1419,10 @@ SH
   (unset GIT_SSH_COMMAND GIT_SSH; remote_sync "$w" sm "$c2"; [ "$REMOTE_SYNC_RC" -eq 0 ]) \
     || fail "an unreachable origin changed sync success"
   [ "$(head_of "$w/sm")" = "$c2" ] || fail "the home did not converge with an unreachable origin"
-  grep -q '^configured-ssh .*BatchMode=yes' "$ssh_log" \
+  grep -q '^configured-ssh ' "$ssh_log" \
     || fail "the tracking refresh bypassed core.sshCommand (log: $(cat "$ssh_log" 2>/dev/null))"
+  ! grep -q 'BatchMode' "$ssh_log" \
+    || fail "the tracking refresh injected options into core.sshCommand (log: $(cat "$ssh_log"))"
 
   : > "$ssh_log"
   git -C "$w/sm" config --unset core.sshCommand
@@ -1428,9 +1430,19 @@ SH
   (unset GIT_SSH_COMMAND; export GIT_SSH="$fakebin/env-ssh"; remote_sync "$w" sm "$c2"; [ "$REMOTE_SYNC_RC" -eq 0 ]) \
     || fail "an unreachable origin changed sync success under GIT_SSH"
   [ "$(head_of "$w/sm")" = "$c2" ] || fail "the home left its release commit under GIT_SSH"
-  grep -q '^env-ssh .*BatchMode=yes' "$ssh_log" \
+  grep -q '^env-ssh ' "$ssh_log" \
     || fail "the tracking refresh bypassed GIT_SSH (log: $(cat "$ssh_log" 2>/dev/null))"
-  pass "R7c the tracking refresh uses the home's core.sshCommand or GIT_SSH noninteractively"
+  ! grep -q 'BatchMode' "$ssh_log" \
+    || fail "the tracking refresh injected options into GIT_SSH (log: $(cat "$ssh_log"))"
+
+  : > "$ssh_log"
+  git -C "$w/sm" update-ref refs/remotes/origin/main "$c2~1"
+  (unset GIT_SSH_COMMAND GIT_SSH; PATH="$fakebin:$PATH"; remote_sync "$w" sm "$c2"; [ "$REMOTE_SYNC_RC" -eq 0 ]) \
+    || fail "an unreachable origin changed sync success under plain ssh"
+  [ "$(head_of "$w/sm")" = "$c2" ] || fail "the home left its release commit under plain ssh"
+  grep -q '^ssh .*BatchMode=yes' "$ssh_log" \
+    || fail "the tracking refresh did not run plain ssh noninteractively (log: $(cat "$ssh_log" 2>/dev/null))"
+  pass "R7c the tracking refresh keeps a configured SSH transport untouched and makes plain ssh noninteractive"
 }
 
 # seed_remote_parent <w>: the parent side of a remote secondmate route in world

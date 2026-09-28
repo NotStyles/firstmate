@@ -229,19 +229,6 @@ fetch_once() {
   return 1
 }
 
-# The SSH command git would use for <dir>, with BatchMode=yes added so a host-key
-# or passphrase prompt fails instead of waiting on the terminal. Mirrors git's
-# precedence: GIT_SSH_COMMAND, then core.sshCommand, then GIT_SSH, then ssh.
-ff_batch_ssh_command() { # <dir>
-  local ssh_command
-  ssh_command=${GIT_SSH_COMMAND:-$(git -C "$1" config --get core.sshCommand 2>/dev/null || true)}
-  if [ -z "$ssh_command" ]; then
-    if [ -n "${GIT_SSH:-}" ]; then ssh_command=$(printf '%q' "$GIT_SSH"); else ssh_command=ssh; fi
-  fi
-  case "$ssh_command" in *"BatchMode=yes"*) ;; *) ssh_command="$ssh_command -o BatchMode=yes" ;; esac
-  printf '%s\n' "$ssh_command"
-}
-
 # Best-effort refresh of a converged secondmate home's origin/<default> and
 # origin/HEAD tracking refs. Origin-mode targets already ran fetch_once, so only
 # remote HEAD needs repair; a sync with refresh-origin=yes (the remote-home sync)
@@ -261,7 +248,10 @@ ff_refresh_tracking() { # <dir> <default-branch> <secondmate-id> <base-mode> <re
     esac
     FF_TRACKING_REFRESHED="${FF_TRACKING_REFRESHED}${FF_TRACKING_REFRESHED:+ }$common"
   fi
-  git_env=(env GIT_TERMINAL_PROMPT=0 "GIT_SSH_COMMAND=$(ff_batch_ssh_command "$dir")")
+  git_env=(env GIT_TERMINAL_PROMPT=0)
+  if [ -z "${GIT_SSH_COMMAND:-}${GIT_SSH:-}" ] && ! git -C "$dir" config --get core.sshCommand >/dev/null 2>&1; then
+    git_env+=("GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+  fi
   if [ "$base_mode" != origin ]; then
     fm_run_timed 5 "${git_env[@]}" \
       git -C "$dir" fetch --quiet --no-tags --no-recurse-submodules origin \
