@@ -1316,8 +1316,6 @@ test_remote_update_refreshes_tracking_refs() {
   pass "remote release updates refresh origin tracking after fast-forward and reset; a missing origin stays optional"
 }
 
-test_remote_update_refreshes_tracking_refs
-
 test_remote_update_fetches_resolved_default_branch() {
   local w c1 c2 tracking_head
   w=$(new_remote_world remote-update-default-branch)
@@ -1345,8 +1343,6 @@ test_remote_update_fetches_resolved_default_branch() {
     || fail "master-default update restored origin/HEAD to '$tracking_head'"
   pass "remote release update fetches and repairs the resolved default branch"
 }
-
-test_remote_update_fetches_resolved_default_branch
 
 test_remote_tracking_refresh_bounds_each_network_step() {
   local w c1 c2 fakebin real_git tracking_log start elapsed
@@ -1398,8 +1394,6 @@ SH
   pass "a slow fetch and hanging remote-head query are independently bounded without changing convergence"
 }
 
-test_remote_tracking_refresh_bounds_each_network_step
-
 # --- R7c: the tracking refresh keeps the home's configured SSH command ---------
 test_remote_tracking_refresh_keeps_configured_ssh() {
   local w c2 fakebin ssh_log
@@ -1431,13 +1425,13 @@ SH
   : > "$ssh_log"
   git -C "$w/sm" config --unset core.sshCommand
   git -C "$w/sm" update-ref refs/remotes/origin/main "$c2~1"
-  (unset GIT_SSH_COMMAND; export GIT_SSH="$fakebin/env-ssh"; remote_sync "$w" sm "$c2")
+  (unset GIT_SSH_COMMAND; export GIT_SSH="$fakebin/env-ssh"; remote_sync "$w" sm "$c2"; [ "$REMOTE_SYNC_RC" -eq 0 ]) \
+    || fail "an unreachable origin changed sync success under GIT_SSH"
+  [ "$(head_of "$w/sm")" = "$c2" ] || fail "the home left its release commit under GIT_SSH"
   grep -q '^env-ssh .*BatchMode=yes' "$ssh_log" \
     || fail "the tracking refresh bypassed GIT_SSH (log: $(cat "$ssh_log" 2>/dev/null))"
   pass "R7c the tracking refresh uses the home's core.sshCommand or GIT_SSH noninteractively"
 }
-
-test_remote_tracking_refresh_keeps_configured_ssh
 
 # seed_remote_parent <w>: the parent side of a remote secondmate route in world
 # <w>: a primary carrying the real remote tooling, a remote home "sm" one commit
@@ -1647,6 +1641,10 @@ test_remote_sync_uses_present_objects
 test_remote_sync_skips_unimportable_target
 test_remote_sync_skips_dirty_diverged_and_feature_branch
 test_remote_sync_without_target_follows_host_copy
+test_remote_update_refreshes_tracking_refs
+test_remote_update_fetches_resolved_default_branch
+test_remote_tracking_refresh_bounds_each_network_step
+test_remote_tracking_refresh_keeps_configured_ssh
 test_bootstrap_syncs_remote_home_to_primary_commit
 test_spawn_remote_sync_refreshes_tracking_refs
 test_bootstrap_reports_outdated_host_actionably

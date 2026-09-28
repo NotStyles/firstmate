@@ -229,12 +229,30 @@ fetch_once() {
   return 1
 }
 
-# Best-effort refresh after a release update has converged a secondmate home.
-# Origin-mode targets already ran fetch_once, so only remote HEAD needs repair;
-# a remote-home sync fetches the home's resolved default branch here.
-# Separate hard bounds keep either network operation from delaying convergence.
-ff_refresh_origin_tracking() { # <dir> <default-branch> <fetch-origin:yes|no>
-  local dir=$1 branch=$2 fetch_origin=$3 common ssh_command
+# The SSH command git would use for <dir>, with BatchMode=yes added so a host-key
+# or passphrase prompt fails instead of waiting on the terminal. Mirrors git's
+# precedence: GIT_SSH_COMMAND, then core.sshCommand, then GIT_SSH, then ssh.
+ff_batch_ssh_command() { # <dir>
+  local ssh_command
+  ssh_command=${GIT_SSH_COMMAND:-$(git -C "$1" config --get core.sshCommand 2>/dev/null || true)}
+  if [ -z "$ssh_command" ]; then
+    if [ -n "${GIT_SSH:-}" ]; then ssh_command=$(printf '%q' "$GIT_SSH"); else ssh_command=ssh; fi
+  fi
+  case "$ssh_command" in *"BatchMode=yes"*) ;; *) ssh_command="$ssh_command -o BatchMode=yes" ;; esac
+  printf '%s\n' "$ssh_command"
+}
+
+# Best-effort refresh of a converged secondmate home's origin/<default> and
+# origin/HEAD tracking refs. Origin-mode targets already ran fetch_once, so only
+# remote HEAD needs repair; a sync with refresh-origin=yes (the remote-home sync)
+# also fetches the resolved default branch; any other sync stays network-free.
+# Runs at most once per git-common-dir, and separate hard bounds keep either
+# network operation from delaying convergence. Always returns 0.
+ff_refresh_tracking() { # <dir> <default-branch> <secondmate-id> <base-mode> <refresh-origin>
+  local dir=$1 branch=$2 secondmate_id=$3 base_mode=$4 refresh_origin=$5 common
+  local -a git_env
+  [ -n "$secondmate_id" ] || return 0
+  [ "$base_mode" = origin ] || [ "$refresh_origin" = yes ] || return 0
   git -C "$dir" remote get-url origin >/dev/null 2>&1 || return 0
   common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   if [ -n "$common" ]; then
@@ -243,30 +261,14 @@ ff_refresh_origin_tracking() { # <dir> <default-branch> <fetch-origin:yes|no>
     esac
     FF_TRACKING_REFRESHED="${FF_TRACKING_REFRESHED}${FF_TRACKING_REFRESHED:+ }$common"
   fi
-  ssh_command=${GIT_SSH_COMMAND:-$(git -C "$dir" config --get core.sshCommand 2>/dev/null || true)}
-  if [ -z "$ssh_command" ]; then
-    if [ -n "${GIT_SSH:-}" ]; then ssh_command=$(printf '%q' "$GIT_SSH"); else ssh_command=ssh; fi
-  fi
-  case "$ssh_command" in *"BatchMode=yes"*) ;; *) ssh_command="$ssh_command -o BatchMode=yes" ;; esac
-  if [ "$fetch_origin" = yes ]; then
-    fm_run_timed 5 env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$ssh_command" \
+  git_env=(env GIT_TERMINAL_PROMPT=0 "GIT_SSH_COMMAND=$(ff_batch_ssh_command "$dir")")
+  if [ "$base_mode" != origin ]; then
+    fm_run_timed 5 "${git_env[@]}" \
       git -C "$dir" fetch --quiet --no-tags --no-recurse-submodules origin \
       "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 || true
   fi
-  fm_run_timed 5 env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$ssh_command" \
-    git -C "$dir" remote set-head origin -a >/dev/null 2>&1 || true
+  fm_run_timed 5 "${git_env[@]}" git -C "$dir" remote set-head origin -a >/dev/null 2>&1 || true
   return 0
-}
-
-ff_refresh_secondmate_tracking() { # <dir> <default-branch> <secondmate-id> <base-mode> <refresh-origin>
-  local dir=$1 branch=$2 secondmate_id=$3 base_mode=$4 refresh_origin=$5 fetch_origin=yes
-  [ -n "$secondmate_id" ] || return 0
-  if [ "$base_mode" = origin ]; then
-    fetch_origin=no
-  elif [ "$refresh_origin" != yes ]; then
-    return 0
-  fi
-  ff_refresh_origin_tracking "$dir" "$branch" "$fetch_origin"
 }
 
 # Which watched instruction paths changed between HEAD and BASE (comma list).
@@ -426,6 +428,15 @@ live_secondmate_meta_records() {
 # wrong-branch target and leave its work untouched. An optional secondmate id
 # enables the content-equivalent divergence proof and durable marker described
 # in this file's header.
+#
+# Positional arguments:
+#   ff_target <dir> <label> <base_mode> [allow_detached] [ignore_seed_marker]
+#             [secondmate_id] [reconciliation_state] [refresh_origin]
+#   allow_detached, ignore_seed_marker - yes|no (default no).
+#   reconciliation_state - state dir holding the divergence marker.
+#   refresh_origin - yes lets a <commit-ish> secondmate sync fetch its origin
+#                    during the tracking-ref refresh (ff_refresh_tracking);
+#                    default no keeps that sync network-free.
 FF_STATUS=""
 FF_INSTR=""
 ff_target() {
@@ -495,7 +506,7 @@ ff_target() {
   if [ "$local_rev" = "$base_rev" ]; then
     FF_STATUS="current"
     [ -z "$reconciliation_state" ] || secondmate_update_reconcile_clear "$reconciliation_state" "$secondmate_id" || true
-    ff_refresh_secondmate_tracking "$dir" "$default" "$secondmate_id" "$base_mode" "$refresh_origin"
+    ff_refresh_tracking "$dir" "$default" "$secondmate_id" "$base_mode" "$refresh_origin"
     echo "$label: already current"
     return 0
   fi
@@ -509,7 +520,7 @@ ff_target() {
         FF_STATUS="updated"
         FF_INSTR="$instr"
         secondmate_update_reconcile_clear "$reconciliation_state" "$secondmate_id" || true
-        ff_refresh_secondmate_tracking "$dir" "$default" "$secondmate_id" "$base_mode" "$refresh_origin"
+        ff_refresh_tracking "$dir" "$default" "$secondmate_id" "$base_mode" "$refresh_origin"
         if [ -n "$instr" ]; then
           echo "$label: reconciled redundant divergence $before..$after (instructions changed: $instr)"
         else
@@ -543,7 +554,7 @@ ff_target() {
   FF_STATUS="updated"
   FF_INSTR="$instr"
   [ -z "$reconciliation_state" ] || secondmate_update_reconcile_clear "$reconciliation_state" "$secondmate_id" || true
-  ff_refresh_secondmate_tracking "$dir" "$default" "$secondmate_id" "$base_mode" "$refresh_origin"
+  ff_refresh_tracking "$dir" "$default" "$secondmate_id" "$base_mode" "$refresh_origin"
   if [ -n "$instr" ]; then
     echo "$label: updated $before..$after (instructions changed: $instr)"
   else
