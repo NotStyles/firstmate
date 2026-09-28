@@ -251,14 +251,19 @@ ff_refresh_tracking() { # <dir> <default-branch> <secondmate-id> <base-mode> <re
     esac
     FF_TRACKING_REFRESHED="${FF_TRACKING_REFRESHED}${FF_TRACKING_REFRESHED:+ }$common"
   fi
-  git_env=(env GIT_TERMINAL_PROMPT=0)
+  # Configured transports run unchanged; no prompt can reach an operator:
+  # no askpass, no stdin, and (where setsid exists) no controlling terminal.
+  git_env=(env GIT_TERMINAL_PROMPT=0 SSH_ASKPASS_REQUIRE=never)
   if [ -z "${GIT_SSH_COMMAND:-}${GIT_SSH:-}" ] && ! git -C "$dir" config --get core.sshCommand >/dev/null 2>&1; then
     git_env+=("GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+  fi
+  if command -v setsid >/dev/null 2>&1; then
+    git_env+=(setsid -w)
   fi
   if [ "$base_mode" != origin ]; then
     fm_run_timed 5 "${git_env[@]}" \
       git -C "$dir" fetch --quiet --no-tags --no-recurse-submodules origin \
-      "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 || true
+      "+refs/heads/$branch:refs/remotes/origin/$branch" </dev/null >/dev/null 2>&1 || true
   fi
   # Point origin/HEAD at the home's own default branch, never at a branch the
   # remote renamed its default to (see the usage header).

@@ -1429,6 +1429,40 @@ SH
   pass "a slow fetch and hanging remote-head query are independently bounded without changing convergence"
 }
 
+# --- R7d: a prompting configured transport cannot block the refresh ----------
+test_remote_tracking_refresh_never_prompts() {
+  local w c2 fakebin ssh_log
+  w=$(new_remote_world remote-tracking-prompt)
+  add_remote_home "$w" sm "$w/coderoot" "$(head_of "$w/coderoot")"
+  git -C "$w/sm" remote set-url origin "git@forge.invalid:fleet/firstmate.git"
+  bump_primary "$w" readme
+  c2=$(head_of "$w/main")
+  git -C "$w/main" push -q origin main
+  git -C "$w/coderoot" pull -q --ff-only
+  fakebin=$(fm_fakebin "$w/promptssh")
+  ssh_log="$w/prompt.log"
+  # A password prompt: waits on the terminal for an answer that never comes.
+  cat > "$fakebin/prompting-ssh" <<SH
+#!/usr/bin/env bash
+printf 'askpass=%s\\n' "\${SSH_ASKPASS_REQUIRE:-}" >> '$ssh_log'
+if read -r -t 20 _pw 2>/dev/null </dev/tty; then printf 'answered\\n' >> '$ssh_log'; else printf 'no-answer\\n' >> '$ssh_log'; fi
+exit 1
+SH
+  chmod +x "$fakebin/prompting-ssh"
+  git -C "$w/sm" config core.sshCommand "$fakebin/prompting-ssh"
+
+  # With a controlling terminal the prompt would wait until the 5s bound kills
+  # it; the refresh must leave it no terminal or askpass to reach.
+  (unset GIT_SSH_COMMAND GIT_SSH; remote_sync "$w" sm "$c2"; [ "$REMOTE_SYNC_RC" -eq 0 ]) < <(sleep 30) \
+    || fail "a prompting transport changed sync success"
+  [ "$(head_of "$w/sm")" = "$c2" ] || fail "the home did not converge behind a prompting transport"
+  grep -q '^askpass=never$' "$ssh_log" \
+    || fail "the refresh left SSH askpass enabled (log: $(cat "$ssh_log" 2>/dev/null))"
+  grep -q '^no-answer$' "$ssh_log" \
+    || fail "the refresh let the transport read a prompt answer (log: $(cat "$ssh_log" 2>/dev/null))"
+  pass "R7d a prompting configured transport fails fast and the sync still converges"
+}
+
 # --- R7c: the tracking refresh keeps the home's configured SSH command ---------
 test_remote_tracking_refresh_keeps_configured_ssh() {
   local w c2 fakebin ssh_log
@@ -1693,6 +1727,7 @@ test_remote_update_fetches_resolved_default_branch
 test_remote_update_follows_changed_remote_default_branch
 test_remote_tracking_refresh_bounds_each_network_step
 test_remote_tracking_refresh_keeps_configured_ssh
+test_remote_tracking_refresh_never_prompts
 test_bootstrap_syncs_remote_home_to_primary_commit
 test_spawn_remote_sync_refreshes_tracking_refs
 test_bootstrap_reports_outdated_host_actionably

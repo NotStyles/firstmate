@@ -216,7 +216,7 @@ test_origin_tracking_refresh_deduplicates_shared_worktrees() {
   tracking_log="$w/tracking-set-head.log"
   cat > "$w/fakebin/git" <<SH
 #!/usr/bin/env bash
-case "\$*" in *" remote set-head origin -a"*) printf 'set-head\\n' >> '$tracking_log' ;; esac
+case "\$*" in *" remote set-head origin "*) printf 'set-head\\n' >> '$tracking_log' ;; esac
 exec '$real_git' "\$@"
 SH
   chmod +x "$w/fakebin/git"
