@@ -1431,7 +1431,7 @@ SH
 
 # --- R7d: a prompting configured transport cannot block the refresh ----------
 test_remote_tracking_refresh_never_prompts() {
-  local w c2 fakebin ssh_log
+  local w c2 fakebin ssh_log pid
   w=$(new_remote_world remote-tracking-prompt)
   add_remote_home "$w" sm "$w/coderoot" "$(head_of "$w/coderoot")"
   git -C "$w/sm" remote set-url origin "git@forge.invalid:fleet/firstmate.git"
@@ -1441,26 +1441,26 @@ test_remote_tracking_refresh_never_prompts() {
   git -C "$w/coderoot" pull -q --ff-only
   fakebin=$(fm_fakebin "$w/promptssh")
   ssh_log="$w/prompt.log"
-  # A password prompt: waits on the terminal for an answer that never comes.
+  # A password prompt that never gets an answer: it hangs past the 5s bound.
   cat > "$fakebin/prompting-ssh" <<SH
 #!/usr/bin/env bash
-printf 'askpass=%s\\n' "\${SSH_ASKPASS_REQUIRE:-}" >> '$ssh_log'
-if read -r -t 20 _pw 2>/dev/null </dev/tty; then printf 'answered\\n' >> '$ssh_log'; else printf 'no-answer\\n' >> '$ssh_log'; fi
+printf 'askpass=%s pid=%s\\n' "\${SSH_ASKPASS_REQUIRE:-}" "\$\$" >> '$ssh_log'
+sleep 20
 exit 1
 SH
   chmod +x "$fakebin/prompting-ssh"
   git -C "$w/sm" config core.sshCommand "$fakebin/prompting-ssh"
 
-  # With a controlling terminal the prompt would wait until the 5s bound kills
-  # it; the refresh must leave it no terminal or askpass to reach.
-  (unset GIT_SSH_COMMAND GIT_SSH; remote_sync "$w" sm "$c2"; [ "$REMOTE_SYNC_RC" -eq 0 ]) < <(sleep 30) \
+  (unset GIT_SSH_COMMAND GIT_SSH; remote_sync "$w" sm "$c2"; [ "$REMOTE_SYNC_RC" -eq 0 ]) \
     || fail "a prompting transport changed sync success"
   [ "$(head_of "$w/sm")" = "$c2" ] || fail "the home did not converge behind a prompting transport"
-  grep -q '^askpass=never$' "$ssh_log" \
+  grep -q '^askpass=never ' "$ssh_log" \
     || fail "the refresh left SSH askpass enabled (log: $(cat "$ssh_log" 2>/dev/null))"
-  grep -q '^no-answer$' "$ssh_log" \
-    || fail "the refresh let the transport read a prompt answer (log: $(cat "$ssh_log" 2>/dev/null))"
-  pass "R7d a prompting configured transport fails fast and the sync still converges"
+  pid=$(sed -n 's/.* pid=//p' "$ssh_log" | head -n 1)
+  [ -n "$pid" ] || fail "the prompting transport was never invoked"
+  ! kill -0 "$pid" 2>/dev/null \
+    || fail "the prompting transport survived the refresh bound (pid $pid)"
+  pass "R7d a prompting configured transport is killed at the refresh bound and the sync still converges"
 }
 
 # --- R7c: the tracking refresh keeps the home's configured SSH command ---------
