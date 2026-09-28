@@ -1345,7 +1345,7 @@ test_remote_update_fetches_resolved_default_branch() {
 }
 
 test_remote_update_follows_changed_remote_default_branch() {
-  local w c1 c2 tracking_head
+  local w c1 c2 c3 tracking_head
   w=$(new_remote_world remote-update-changed-default)
   c1=$(head_of "$w/coderoot")
   add_remote_home "$w" sm "$w/coderoot" "$c1"
@@ -1363,13 +1363,20 @@ test_remote_update_follows_changed_remote_default_branch() {
 
   [ "$REMOTE_UPDATE_RC" -eq 0 ] || fail "changed-default remote update failed: $REMOTE_UPDATE_OUT"
   [ "$(head_of "$w/sm")" = "$c2" ] || fail "changed-default home did not converge"
-  [ "$(git -C "$w/sm" rev-parse -q --verify refs/remotes/origin/master)" = "$c2" ] \
-    || fail "refresh did not fetch origin's new default branch"
+  [ "$(git -C "$w/sm" rev-parse refs/remotes/origin/main)" = "$c2" ] \
+    || fail "refresh did not refresh the home's own default branch"
   tracking_head=$(git -C "$w/sm" symbolic-ref --quiet refs/remotes/origin/HEAD) \
     || fail "changed-default update left origin/HEAD missing"
-  [ "$tracking_head" = refs/remotes/origin/master ] \
-    || fail "changed-default update left origin/HEAD at '$tracking_head'"
-  pass "remote release update follows a default branch that changed after clone"
+  [ "$tracking_head" = refs/remotes/origin/main ] \
+    || fail "changed-default update retargeted origin/HEAD to '$tracking_head'"
+
+  bump_primary "$w" readme
+  c3=$(head_of "$w/main")
+  git -C "$w/main" push -q origin main main:master
+  remote_update "$w" sm
+  [ "$REMOTE_UPDATE_RC" -eq 0 ] || fail "second changed-default update failed: $REMOTE_UPDATE_OUT"
+  [ "$(head_of "$w/sm")" = "$c3" ] || fail "second changed-default update did not converge: $REMOTE_UPDATE_OUT"
+  pass "a home whose remote renamed its default keeps converging on its own default branch"
 }
 
 test_remote_tracking_refresh_bounds_each_network_step() {
